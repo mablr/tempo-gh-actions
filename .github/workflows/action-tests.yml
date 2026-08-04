@@ -1,0 +1,71 @@
+name: Action Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: {}
+
+jobs:
+  discover:
+    name: Discover action tests
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.tests.outputs.tests }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Find action tests
+        id: tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=$(find actions -type f -name '*.test.js' -print | sort | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          if [ "$tests" = "[]" ]; then
+            echo "::error::No action tests found"
+            exit 1
+          fi
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: ${{ matrix.test }}
+    needs: discover
+    runs-on: ubuntu-latest
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJSON(needs.discover.outputs.tests) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run action test
+        env:
+          TEST_FILE: ${{ matrix.test }}
+        run: node --test "$TEST_FILE"
+
+  tests-passed:
+    name: tests-passed
+    if: ${{ always() }}
+    needs: [discover, test]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check matrix results
+        env:
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$DISCOVER_RESULT" != "success" || "$TEST_RESULT" != "success" ]]; then
+            echo "::error::Action tests failed (discover=$DISCOVER_RESULT, tests=$TEST_RESULT)"
+            exit 1
+          fi
+          echo "All action tests passed"
